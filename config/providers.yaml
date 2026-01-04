@@ -1,0 +1,29 @@
+# Provider configuration for Options Trader MCP Server
+
+# Active provider (mock, yahoo, ibkr, saxo)
+active_provider: mock
+
+# Yahoo Finance (no API key required)
+yahoo:
+  enabled: true
+  rate_limit: 2000  # ms between requests
+
+# Interactive Brokers
+ibkr:
+  enabled: false
+  host: "127.0.0.1"
+  port: 7497  # 7497 for paper trading, 7496 for live
+  client_id: 1
+
+# SAXO OpenAPI
+# Get credentials at: https://www.developer.saxo/openapi/learn
+saxo:
+  enabled: false
+  environment: "sim"  # sim or live
+  # OAuth2 - obtain access_token via authorization flow
+  # access_token: "your-oauth2-access-token"
+  #
+  # To get an access token:
+  # 1. Register an app at https://www.developer.saxo/openapi/appmanagement
+  # 2. Use the 24-hour token from the app dashboard for testing
+  # 3. For production, implement the OAuth2 authorization code flow
