@@ -1,9 +1,9 @@
 import { useState, useMemo } from "react"
-import { useQuote } from "@/hooks/useMarketData"
+import { useBatchQuotes } from "@/hooks/useMarketData"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { TrendingUp, TrendingDown, Loader2 } from "lucide-react"
-import type { Market, Quote } from "@/lib/api"
+import type { Market, Quote, BatchSymbol } from "@/lib/api"
 
 interface MarketMoversProps {
   onSymbolSelect?: (symbol: string, market: Market) => void
@@ -23,6 +23,11 @@ const TRACKED_SYMBOLS: Array<{ symbol: string; market: Market; name: string }> =
   { symbol: "NKY", market: "JP", name: "Nikkei 225" },
   { symbol: "HSI", market: "HK", name: "Hang Seng" },
 ]
+
+const BATCH_SYMBOLS: BatchSymbol[] = TRACKED_SYMBOLS.map((s) => ({
+  symbol: s.symbol,
+  market: s.market,
+}))
 
 function MoverRow({
   quote,
@@ -65,31 +70,22 @@ function MoverRow({
   )
 }
 
-function QuoteLoader({ symbol, market }: { symbol: string; market: Market }) {
-  const { data } = useQuote(symbol, market)
-  return data || null
-}
-
 export function MarketMovers({ onSymbolSelect, className }: MarketMoversProps) {
   const [activeTab, setActiveTab] = useState<TabType>("gainers")
 
-  // Fetch all quotes
-  const quoteResults = TRACKED_SYMBOLS.map((item) => ({
-    ...item,
-    query: useQuote(item.symbol, item.market),
-  }))
-
-  const isLoading = quoteResults.some((q) => q.query.isLoading)
+  // Fetch all quotes in a single batch request
+  const { data: batchQuotes, isLoading } = useBatchQuotes(BATCH_SYMBOLS)
 
   // Process and sort quotes based on active tab
   const sortedItems = useMemo(() => {
-    const validItems = quoteResults
-      .filter((q) => q.query.data)
-      .map((q) => ({
-        quote: q.query.data!,
-        name: q.name,
-        market: q.market,
-      }))
+    if (!batchQuotes) return []
+
+    const validItems = TRACKED_SYMBOLS
+      .map((item) => {
+        const quote = batchQuotes[item.symbol] as Quote | undefined
+        return quote && !("error" in quote) ? { quote, name: item.name, market: item.market } : null
+      })
+      .filter((x): x is NonNullable<typeof x> => x !== null)
 
     switch (activeTab) {
       case "gainers":
@@ -109,7 +105,7 @@ export function MarketMovers({ onSymbolSelect, className }: MarketMoversProps) {
       default:
         return validItems
     }
-  }, [quoteResults, activeTab])
+  }, [batchQuotes, activeTab])
 
   return (
     <Card className={className}>

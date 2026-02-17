@@ -1,6 +1,8 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query"
 import {
   getQuote,
+  getBatchQuotes,
+  getBatchIVAnalysis,
   getOptionChain,
   getVolatilitySurface,
   getWatchlist,
@@ -83,6 +85,7 @@ import {
   getMarketIndicators,
   // Types
   type Market,
+  type BatchSymbol,
   type SwitchProviderRequest,
   type PayoffRequest,
   type TimeSeriesPayoffRequest,
@@ -851,5 +854,56 @@ export function useMarketIndicators(enabled: boolean = true) {
     enabled,
     refetchInterval: 30000, // Refresh every 30 seconds
     staleTime: 15000,
+  })
+}
+
+// =============================================================================
+// BATCH HOOKS
+// =============================================================================
+
+function seedIndividualCaches(
+  queryClient: QueryClient,
+  data: Record<string, unknown>,
+  keyPrefix: string,
+  symbols: BatchSymbol[],
+  staleTime: number
+) {
+  for (const item of symbols) {
+    const entry = data[item.symbol]
+    if (entry && !("error" in (entry as Record<string, unknown>))) {
+      queryClient.setQueryData([keyPrefix, item.symbol, item.market], entry, {
+        updatedAt: Date.now(),
+      })
+    }
+  }
+}
+
+export function useBatchQuotes(symbols: BatchSymbol[], enabled: boolean = true) {
+  const queryClient = useQueryClient()
+  return useQuery({
+    queryKey: ["batchQuotes", symbols.map((s) => `${s.symbol}:${s.market}`).join(",")],
+    queryFn: async () => {
+      const data = await getBatchQuotes(symbols)
+      seedIndividualCaches(queryClient, data, "quote", symbols, 10000)
+      return data
+    },
+    enabled: enabled && symbols.length > 0,
+    refetchInterval: 30000,
+    staleTime: 10000,
+  })
+}
+
+export function useBatchIVAnalysis(symbols: BatchSymbol[], enabled: boolean = true) {
+  const queryClient = useQueryClient()
+  return useQuery({
+    queryKey: ["batchIV", symbols.map((s) => `${s.symbol}:${s.market}`).join(",")],
+    queryFn: async () => {
+      const data = await getBatchIVAnalysis(symbols)
+      seedIndividualCaches(queryClient, data, "ivAnalysis", symbols, 30000)
+      return data
+    },
+    enabled: enabled && symbols.length > 0,
+    refetchInterval: 60000,
+    staleTime: 30000,
   })
 }

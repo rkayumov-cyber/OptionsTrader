@@ -100,6 +100,25 @@ export async function getQuote(symbol: string, market: Market): Promise<Quote> {
   return data
 }
 
+export interface BatchSymbol {
+  symbol: string
+  market: Market
+}
+
+export async function getBatchQuotes(
+  symbols: BatchSymbol[]
+): Promise<Record<string, Quote>> {
+  const { data } = await api.post("/api/quotes/batch", { symbols })
+  return data
+}
+
+export async function getBatchIVAnalysis(
+  symbols: BatchSymbol[]
+): Promise<Record<string, IVAnalysis>> {
+  const { data } = await api.post("/api/iv-analysis/batch", { symbols })
+  return data
+}
+
 export async function getOptionChain(
   symbol: string,
   market: Market,

@@ -25,6 +25,7 @@ export function useEngineRegime() {
     queryKey: ["engine", "regime"],
     queryFn: getEngineRegime,
     refetchInterval: 60_000,
+    staleTime: 30_000,
   })
 }
 
@@ -33,6 +34,7 @@ export function useEngineRegimeHistory() {
     queryKey: ["engine", "regime", "history"],
     queryFn: getEngineRegimeHistory,
     refetchInterval: 60_000,
+    staleTime: 30_000,
   })
 }
 
@@ -46,6 +48,7 @@ export function useEngineRecommendations(
     queryKey: ["engine", "recommendations", nav, objective],
     queryFn: () => getEngineRecommendations(nav, objective),
     refetchInterval: 120_000,
+    staleTime: 30_000,
   })
 }
 
@@ -59,6 +62,7 @@ export function useEngineAnalysis(
     queryKey: ["engine", "analysis", nav, objective],
     queryFn: () => getEngineAnalysis(nav, objective),
     refetchInterval: 120_000,
+    staleTime: 30_000,
   })
 }
 
@@ -88,6 +92,7 @@ export function useEngineTailRisk() {
     queryKey: ["engine", "tail-risk"],
     queryFn: getEngineTailRisk,
     refetchInterval: 60_000,
+    staleTime: 30_000,
   })
 }
 
@@ -96,6 +101,7 @@ export function useEngineEarlyWarnings() {
     queryKey: ["engine", "early-warnings"],
     queryFn: getEngineEarlyWarnings,
     refetchInterval: 60_000,
+    staleTime: 30_000,
   })
 }
 
@@ -106,6 +112,7 @@ export function useEngineConflicts() {
     queryKey: ["engine", "conflicts"],
     queryFn: getEngineConflicts,
     refetchInterval: 60_000,
+    staleTime: 30_000,
   })
 }
 
@@ -114,6 +121,7 @@ export function useEngineActiveConflicts() {
     queryKey: ["engine", "conflicts", "active"],
     queryFn: getEngineActiveConflicts,
     refetchInterval: 60_000,
+    staleTime: 30_000,
   })
 }
 

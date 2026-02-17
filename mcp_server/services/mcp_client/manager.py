@@ -316,32 +316,66 @@ class MCPClientManager:
         data_type: str,
         mapping_key: str,
         args: dict[str, Any] | None = None,
+        timeout: float = 10.0,
     ) -> MCPToolCallResult | None:
-        """Try servers in fallback priority order for a given data type."""
+        """Fire all eligible MCP servers concurrently; return first success.
+
+        Falls back to sequential iteration if only one server is eligible.
+        Each individual call is wrapped with a per-call timeout.
+        """
         priority = self._config.fallback_priority.get(data_type, [])
 
+        # Build list of (server_id, tool_name, translated_args) for eligible servers
+        eligible: list[tuple[str, str, dict[str, Any]]] = []
         for server_id in priority:
             if server_id not in self._sessions:
                 continue
-
             config = self._config.mcp_servers.get(server_id)
             if not config:
                 continue
-
             tool_name = config.tool_mappings.get(mapping_key)
             if not tool_name:
                 continue
-
-            # Translate arg names for this server/tool combination
             translated_args = self._translate_args(config, tool_name, args)
+            eligible.append((server_id, tool_name, translated_args))
 
-            result = await self.call_tool(server_id, tool_name, translated_args)
-            if result.success:
-                return result
+        if not eligible:
+            return None
 
-            logger.warning(
-                "Fallback %s/%s failed: %s", server_id, tool_name, result.error
+        # Fire all eligible servers concurrently
+        async def _call_with_timeout(server_id: str, tool_name: str, call_args: dict) -> MCPToolCallResult:
+            return await asyncio.wait_for(
+                self.call_tool(server_id, tool_name, call_args),
+                timeout=timeout,
             )
+
+        tasks = {
+            server_id: asyncio.create_task(
+                _call_with_timeout(server_id, tool_name, call_args)
+            )
+            for server_id, tool_name, call_args in eligible
+        }
+
+        try:
+            for coro in asyncio.as_completed(tasks.values(), timeout=timeout):
+                try:
+                    result = await coro
+                    if result.success:
+                        # Cancel remaining tasks
+                        for task in tasks.values():
+                            if not task.done():
+                                task.cancel()
+                        return result
+                except (asyncio.TimeoutError, Exception) as e:
+                    logger.debug("MCP fallback task failed: %s", e)
+                    continue
+        except asyncio.TimeoutError:
+            logger.warning("All MCP fallback tasks timed out for %s/%s", data_type, mapping_key)
+        finally:
+            # Ensure all tasks are cancelled
+            for task in tasks.values():
+                if not task.done():
+                    task.cancel()
 
         return None
 

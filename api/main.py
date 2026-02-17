@@ -1,5 +1,6 @@
 """FastAPI REST API for Options Trader."""
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, date
@@ -33,8 +34,12 @@ from mcp_server.services.alerts import alert_service
 from mcp_server.services.jpm_research import jpm_research_service
 from mcp_server.models import JPMStrategyType, JPMScreenType
 from mcp_server.services.mcp_client import MCPClientManager, AggregatedProvider
+from api.cache import TTLCache, TTL_QUOTES, TTL_IV_ANALYSIS, TTL_SENTIMENT, TTL_MARKET_INDICATORS, TTL_FEAR_GREED, TTL_OPTIONS
 
 logger = logging.getLogger(__name__)
+
+# Global cache instance
+app_cache = TTLCache()
 
 # MCP Client Manager singleton
 mcp_manager = MCPClientManager()
@@ -152,7 +157,11 @@ async def get_quote(symbol: str, market: Market = Query(default="US")):
     """Get real-time quote for a symbol."""
     try:
         provider = get_provider()
-        quote = await provider.get_quote(symbol, market)
+        quote = await app_cache.get_or_fetch(
+            f"quote:{symbol}:{market}",
+            lambda: provider.get_quote(symbol, market),
+            TTL_QUOTES,
+        )
         return quote.model_dump()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -390,7 +399,11 @@ async def get_iv_analysis(symbol: str, market: Market = Query(default="US")):
     """Get IV rank and percentile analysis for a symbol."""
     try:
         provider = get_provider()
-        analysis = await provider.get_iv_analysis(symbol, market)
+        analysis = await app_cache.get_or_fetch(
+            f"iv:{symbol}:{market}",
+            lambda: provider.get_iv_analysis(symbol, market),
+            TTL_IV_ANALYSIS,
+        )
         return analysis.model_dump()
     except NotImplementedError:
         raise HTTPException(status_code=501, detail="IV analysis not supported by current provider")
@@ -403,7 +416,11 @@ async def get_market_sentiment(symbol: str, market: Market = Query(default="US")
     """Get put/call ratio and sentiment for a symbol."""
     try:
         provider = get_provider()
-        sentiment = await provider.get_market_sentiment(symbol, market)
+        sentiment = await app_cache.get_or_fetch(
+            f"sentiment:{symbol}:{market}",
+            lambda: provider.get_market_sentiment(symbol, market),
+            TTL_SENTIMENT,
+        )
         return sentiment.model_dump()
     except NotImplementedError:
         raise HTTPException(status_code=501, detail="Market sentiment not supported by current provider")
@@ -1434,9 +1451,8 @@ async def get_jpm_full_research():
 # =============================================================================
 
 
-@app.get("/api/fear-greed")
-async def get_fear_greed_index():
-    """Get market Fear/Greed index from CNN data."""
+async def _fetch_fear_greed():
+    """Fetch Fear/Greed data from CNN (internal, cached)."""
     import httpx
 
     CNN_API_URL = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
@@ -1605,6 +1621,14 @@ async def get_fear_greed_index():
         }
 
 
+@app.get("/api/fear-greed")
+async def get_fear_greed_index():
+    """Get market Fear/Greed index from CNN data (cached)."""
+    return await app_cache.get_or_fetch(
+        "fear_greed", _fetch_fear_greed, TTL_FEAR_GREED,
+    )
+
+
 # =============================================================================
 # MARKET INDICATORS ENDPOINT
 # =============================================================================
@@ -1627,77 +1651,71 @@ SECTOR_ETFS = [
 
 @app.get("/api/market-indicators")
 async def get_market_indicators():
-    """Get comprehensive market indicators (bonds, commodities, sectors, breadth)."""
+    """Get comprehensive market indicators (bonds, commodities, sectors, breadth).
+
+    All 14+ quote fetches run in parallel via asyncio.gather with cache.
+    """
     import random
 
     provider = get_provider()
     now = datetime.now()
 
-    # Fetch bond/rate data
-    try:
-        tnx_quote = await provider.get_quote("^TNX", "US")
-        tnx_yield = tnx_quote.price
-    except Exception:
-        tnx_yield = 4.25 + random.uniform(-0.2, 0.2)
+    # Define all symbols to fetch in parallel
+    indicator_symbols = ["^TNX", "^IRX", "TLT", "GLD", "USO", "UUP"]
+    sector_symbols = [sym for sym, _ in SECTOR_ETFS]
+    all_symbols = indicator_symbols + sector_symbols
 
-    try:
-        irx_quote = await provider.get_quote("^IRX", "US")
-        irx_yield = irx_quote.price / 100  # IRX is in basis points
-    except Exception:
-        irx_yield = 4.50 + random.uniform(-0.2, 0.2)
+    # Fetch ALL quotes concurrently through cache
+    async def _cached_quote(symbol: str):
+        return await app_cache.get_or_fetch(
+            f"quote:{symbol}:US",
+            lambda s=symbol: provider.get_quote(s, "US"),
+            TTL_QUOTES,
+        )
 
-    try:
-        tlt_quote = await provider.get_quote("TLT", "US")
-        tlt_price = tlt_quote.price
-        tlt_change = tlt_quote.change
-        tlt_change_percent = tlt_quote.change_percent
-    except Exception:
+    results = await asyncio.gather(
+        *[_cached_quote(sym) for sym in all_symbols],
+        return_exceptions=True,
+    )
+
+    # Unpack indicator results (first 6)
+    tnx_res, irx_res, tlt_res, gld_res, uso_res, uup_res = results[:6]
+    sector_results = results[6:]
+
+    # --- Bonds ---
+    tnx_yield = tnx_res.price if not isinstance(tnx_res, Exception) else 4.25 + random.uniform(-0.2, 0.2)
+    irx_yield = (irx_res.price / 100) if not isinstance(irx_res, Exception) else 4.50 + random.uniform(-0.2, 0.2)
+
+    if isinstance(tlt_res, Exception):
         tlt_price = 92.50 + random.uniform(-2, 2)
         tlt_change = random.uniform(-1, 1)
         tlt_change_percent = (tlt_change / tlt_price) * 100
-
-    yield_spread = tnx_yield - irx_yield
+    else:
+        tlt_price = tlt_res.price
+        tlt_change = tlt_res.change
+        tlt_change_percent = tlt_res.change_percent
 
     bonds = BondRatesData(
         tnx_yield=round(tnx_yield, 3),
         irx_yield=round(irx_yield, 3),
-        yield_spread=round(yield_spread, 3),
+        yield_spread=round(tnx_yield - irx_yield, 3),
         tlt_price=round(tlt_price, 2),
         tlt_change=round(tlt_change, 2) if tlt_change else None,
         tlt_change_percent=round(tlt_change_percent, 2) if tlt_change_percent else None,
         timestamp=now,
     )
 
-    # Fetch commodity data
-    try:
-        gld_quote = await provider.get_quote("GLD", "US")
-        gold_price = gld_quote.price
-        gold_change = gld_quote.change
-        gold_change_percent = gld_quote.change_percent
-    except Exception:
-        gold_price = 185.0 + random.uniform(-3, 3)
-        gold_change = random.uniform(-2, 2)
-        gold_change_percent = (gold_change / gold_price) * 100
+    # --- Commodities ---
+    def _extract_quote(res, defaults):
+        if isinstance(res, Exception):
+            bp = defaults[0] + random.uniform(*defaults[1])
+            bc = random.uniform(*defaults[2])
+            return bp, bc, (bc / bp) * 100
+        return res.price, res.change, res.change_percent
 
-    try:
-        uso_quote = await provider.get_quote("USO", "US")
-        oil_price = uso_quote.price
-        oil_change = uso_quote.change
-        oil_change_percent = uso_quote.change_percent
-    except Exception:
-        oil_price = 72.0 + random.uniform(-2, 2)
-        oil_change = random.uniform(-1.5, 1.5)
-        oil_change_percent = (oil_change / oil_price) * 100
-
-    try:
-        uup_quote = await provider.get_quote("UUP", "US")
-        dollar_price = uup_quote.price
-        dollar_change = uup_quote.change
-        dollar_change_percent = uup_quote.change_percent
-    except Exception:
-        dollar_price = 28.0 + random.uniform(-0.5, 0.5)
-        dollar_change = random.uniform(-0.3, 0.3)
-        dollar_change_percent = (dollar_change / dollar_price) * 100
+    gold_price, gold_change, gold_change_percent = _extract_quote(gld_res, (185.0, (-3, 3), (-2, 2)))
+    oil_price, oil_change, oil_change_percent = _extract_quote(uso_res, (72.0, (-2, 2), (-1.5, 1.5)))
+    dollar_price, dollar_change, dollar_change_percent = _extract_quote(uup_res, (28.0, (-0.5, 0.5), (-0.3, 0.3)))
 
     commodities = CommoditiesData(
         gold_price=round(gold_price, 2),
@@ -1712,57 +1730,101 @@ async def get_market_indicators():
         timestamp=now,
     )
 
-    # Fetch sector data
+    # --- Sectors ---
     sectors = []
-    for symbol, name in SECTOR_ETFS:
-        try:
-            quote = await provider.get_quote(symbol, "US")
-            sectors.append(SectorData(
-                symbol=symbol,
-                name=name,
-                price=round(quote.price, 2),
-                change=round(quote.change, 2) if quote.change else None,
-                change_percent=round(quote.change_percent, 2) if quote.change_percent else None,
-            ))
-        except Exception:
-            # Mock data fallback
+    for (symbol, name), res in zip(SECTOR_ETFS, sector_results):
+        if isinstance(res, Exception):
             base_price = 40 + random.uniform(0, 60)
             change_pct = random.uniform(-3, 3)
             sectors.append(SectorData(
-                symbol=symbol,
-                name=name,
+                symbol=symbol, name=name,
                 price=round(base_price, 2),
                 change=round(base_price * change_pct / 100, 2),
                 change_percent=round(change_pct, 2),
             ))
+        else:
+            sectors.append(SectorData(
+                symbol=symbol, name=name,
+                price=round(res.price, 2),
+                change=round(res.change, 2) if res.change else None,
+                change_percent=round(res.change_percent, 2) if res.change_percent else None,
+            ))
 
-    # Market breadth data (simulated - real data requires paid sources)
-    # Using random but realistic values
+    # --- Breadth (simulated) ---
     advances = random.randint(1200, 2200)
     declines = random.randint(800, 1800)
     new_highs = random.randint(20, 150)
     new_lows = random.randint(10, 100)
 
     breadth = MarketBreadthData(
-        advances=advances,
-        declines=declines,
+        advances=advances, declines=declines,
         advance_decline_ratio=round(advances / max(declines, 1), 2),
-        new_highs=new_highs,
-        new_lows=new_lows,
+        new_highs=new_highs, new_lows=new_lows,
         highs_lows_ratio=round(new_highs / max(new_lows, 1), 2),
         mcclellan_oscillator=round(random.uniform(-100, 100), 1),
         timestamp=now,
     )
 
     response = MarketIndicatorsResponse(
-        bonds=bonds,
-        commodities=commodities,
-        sectors=sectors,
-        breadth=breadth,
-        timestamp=now,
+        bonds=bonds, commodities=commodities,
+        sectors=sectors, breadth=breadth, timestamp=now,
     )
 
     return response.model_dump()
+
+
+# =============================================================================
+# BATCH ENDPOINTS
+# =============================================================================
+
+
+class BatchSymbol(BaseModel):
+    symbol: str
+    market: Market = "US"
+
+
+class BatchRequest(BaseModel):
+    symbols: list[BatchSymbol]
+
+
+@app.post("/api/quotes/batch")
+async def get_batch_quotes(request: BatchRequest):
+    """Get quotes for multiple symbols in a single request."""
+    provider = get_provider()
+
+    async def _fetch_one(item: BatchSymbol):
+        try:
+            quote = await app_cache.get_or_fetch(
+                f"quote:{item.symbol}:{item.market}",
+                lambda s=item.symbol, m=item.market: provider.get_quote(s, m),
+                TTL_QUOTES,
+            )
+            return item.symbol, quote.model_dump()
+        except Exception as e:
+            return item.symbol, {"error": str(e), "symbol": item.symbol, "market": item.market}
+
+    results = await asyncio.gather(*[_fetch_one(s) for s in request.symbols])
+    return {symbol: data for symbol, data in results}
+
+
+@app.post("/api/iv-analysis/batch")
+async def get_batch_iv_analysis(request: BatchRequest):
+    """Get IV analysis for multiple symbols in a single request."""
+    provider = get_provider()
+
+    async def _fetch_one(item: BatchSymbol):
+        try:
+            analysis = await app_cache.get_or_fetch(
+                f"iv:{item.symbol}:{item.market}",
+                lambda s=item.symbol, m=item.market: provider.get_iv_analysis(s, m),
+                TTL_IV_ANALYSIS,
+            )
+            return item.symbol, analysis.model_dump()
+        except Exception as e:
+            return item.symbol, {"error": str(e), "symbol": item.symbol, "market": item.market}
+
+    results = await asyncio.gather(*[_fetch_one(s) for s in request.symbols])
+    return {symbol: data for symbol, data in results}
 
 
 # ══════════════════════════════════════════════════════════════════════════

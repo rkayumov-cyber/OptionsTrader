@@ -1,11 +1,11 @@
-import { useState } from "react"
-import { useWatchlist, useQuote, useIVAnalysis, useAddToWatchlist, useRemoveFromWatchlist } from "@/hooks/useMarketData"
+import { useState, useMemo } from "react"
+import { useWatchlist, useBatchQuotes, useBatchIVAnalysis, useAddToWatchlist, useRemoveFromWatchlist } from "@/hooks/useMarketData"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
 import { Loader2, Plus, Trash2, TrendingUp, TrendingDown, Star } from "lucide-react"
-import type { Market, WatchlistItem } from "@/lib/api"
+import type { Market, Quote, IVAnalysis, WatchlistItem, BatchSymbol } from "@/lib/api"
 
 interface EnhancedWatchlistProps {
   onSymbolSelect?: (symbol: string, market: Market) => void
@@ -14,15 +14,14 @@ interface EnhancedWatchlistProps {
 
 interface WatchlistRowProps {
   item: WatchlistItem
+  quote?: Quote
+  ivData?: IVAnalysis
+  isLoading: boolean
   onSelect?: () => void
   onRemove?: () => void
 }
 
-function WatchlistRow({ item, onSelect, onRemove }: WatchlistRowProps) {
-  const { data: quote, isLoading: quoteLoading } = useQuote(item.symbol, item.market)
-  const { data: ivData, isLoading: ivLoading } = useIVAnalysis(item.symbol, item.market)
-
-  const isLoading = quoteLoading || ivLoading
+function WatchlistRow({ item, quote, ivData, isLoading, onSelect, onRemove }: WatchlistRowProps) {
   const change = quote?.change_percent || 0
   const isPositive = change >= 0
 
@@ -69,7 +68,7 @@ function WatchlistRow({ item, onSelect, onRemove }: WatchlistRowProps) {
 
       {/* IV Rank */}
       <div className="text-right w-16">
-        {ivLoading ? (
+        {isLoading ? (
           <span className="text-xs text-muted-foreground">--</span>
         ) : ivData ? (
           <div
@@ -110,6 +109,15 @@ export function EnhancedWatchlist({ onSymbolSelect, className }: EnhancedWatchli
   const { data: watchlist, isLoading } = useWatchlist()
   const addToWatchlist = useAddToWatchlist()
   const removeFromWatchlist = useRemoveFromWatchlist()
+
+  // Build batch symbol list from watchlist
+  const batchSymbols: BatchSymbol[] = useMemo(
+    () => (watchlist || []).map((w) => ({ symbol: w.symbol, market: w.market })),
+    [watchlist]
+  )
+
+  const { data: batchQuotes, isLoading: quotesLoading } = useBatchQuotes(batchSymbols, !!watchlist)
+  const { data: batchIV, isLoading: ivLoading } = useBatchIVAnalysis(batchSymbols, !!watchlist)
 
   const handleAdd = () => {
     if (newSymbol.trim()) {
@@ -210,6 +218,9 @@ export function EnhancedWatchlist({ onSymbolSelect, className }: EnhancedWatchli
               <WatchlistRow
                 key={`${item.symbol}-${item.market}`}
                 item={item}
+                quote={batchQuotes?.[item.symbol] as Quote | undefined}
+                ivData={batchIV?.[item.symbol] as IVAnalysis | undefined}
+                isLoading={quotesLoading || ivLoading}
                 onSelect={() => onSymbolSelect?.(item.symbol, item.market)}
                 onRemove={() =>
                   removeFromWatchlist.mutate({ symbol: item.symbol, market: item.market })

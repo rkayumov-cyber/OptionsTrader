@@ -1,5 +1,6 @@
 """AggregatedProvider - wraps primary provider with MCP fallbacks."""
 
+import asyncio
 import logging
 
 from mcp_server.models import (
@@ -77,14 +78,16 @@ class AggregatedProvider(MarketDataProvider):
                     expiration = exps[0] if exps else None
             if not expiration:
                 raise
-            # Fetch calls and puts separately and merge
-            calls_result = await self._mcp.call_tool_with_fallback(
-                "options", "get_option_chain",
-                {"ticker": symbol, "expiration_date": expiration, "option_type": "calls"},
-            )
-            puts_result = await self._mcp.call_tool_with_fallback(
-                "options", "get_option_chain",
-                {"ticker": symbol, "expiration_date": expiration, "option_type": "puts"},
+            # Fetch calls and puts concurrently
+            calls_result, puts_result = await asyncio.gather(
+                self._mcp.call_tool_with_fallback(
+                    "options", "get_option_chain",
+                    {"ticker": symbol, "expiration_date": expiration, "option_type": "calls"},
+                ),
+                self._mcp.call_tool_with_fallback(
+                    "options", "get_option_chain",
+                    {"ticker": symbol, "expiration_date": expiration, "option_type": "puts"},
+                ),
             )
             merged = {}
             if calls_result and calls_result.success:
@@ -136,18 +139,16 @@ class AggregatedProvider(MarketDataProvider):
             return await self._primary.get_iv_analysis(symbol, market)
         except Exception as e:
             logger.debug("Primary IV analysis failed (%s), trying MCP", type(e).__name__)
-            # Get stock info for price/52-week data
-            result = await self._mcp.call_tool_with_fallback(
-                "quote", "get_quote", {"ticker": symbol}
+            # Fetch quote and expirations concurrently
+            result, exp_result = await asyncio.gather(
+                self._mcp.call_tool_with_fallback("quote", "get_quote", {"ticker": symbol}),
+                self._mcp.call_tool_with_fallback("options", "get_option_expirations", {"ticker": symbol}),
             )
             if result and result.success:
                 analysis = ToolMapper.build_iv_analysis(result.data, symbol, market)
                 if analysis:
                     return analysis
             # Try deriving from option chain ATM IV
-            exp_result = await self._mcp.call_tool_with_fallback(
-                "options", "get_option_expirations", {"ticker": symbol}
-            )
             if exp_result and exp_result.success and exp_result.data:
                 exps = exp_result.data if isinstance(exp_result.data, list) else []
                 if exps:
