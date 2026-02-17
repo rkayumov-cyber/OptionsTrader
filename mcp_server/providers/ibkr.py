@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-from ib_insync import IB, Option, Stock
+from ib_insync import Contract, IB, Index, Option, Stock
 
 from mcp_server.models import (
     Greeks,
@@ -23,6 +23,19 @@ from mcp_server.models import (
     VolatilitySurface,
 )
 from mcp_server.providers.base import MarketDataProvider
+
+# Symbols that are indices (not stocks) and need Index contracts in IB.
+# Maps frontend symbol -> (IB symbol, exchange, currency).
+_INDEX_MAP: dict[str, tuple[str, str, str]] = {
+    "VIX":  ("VIX",  "CBOE",    "USD"),
+    "^VIX": ("VIX",  "CBOE",    "USD"),
+    "^TNX": ("TNX",  "CBOE",    "USD"),
+    "^IRX": ("IRX",  "CBOE",    "USD"),
+    "^GSPC": ("SPX", "CBOE",    "USD"),
+    "^DJI": ("INDU", "CME",     "USD"),
+    "NKY":  ("N225", "OSE.JPN", "JPY"),
+    "HSI":  ("HSI",  "HKFE",    "HKD"),
+}
 
 
 def _is_valid(val) -> bool:
@@ -128,6 +141,17 @@ class IBKRProvider(MarketDataProvider):
             currency=self._get_currency(market),
         )
 
+    def _create_contract(self, symbol: str, market: Market) -> Contract:
+        """Create appropriate IB contract -- Index for known indices, Stock otherwise."""
+        index_info = _INDEX_MAP.get(symbol)
+        if index_info:
+            ib_symbol, exchange, currency = index_info
+            return Index(symbol=ib_symbol, exchange=exchange, currency=currency)
+        return self._create_stock_contract(symbol, market)
+
+    def _is_index(self, symbol: str) -> bool:
+        return symbol in _INDEX_MAP
+
     def _extract_greeks(self, ticker) -> Greeks | None:
         if not ticker.modelGreeks:
             return None
@@ -187,12 +211,23 @@ class IBKRProvider(MarketDataProvider):
 
     # ── Sync implementations (run in dedicated thread) ───────────────
 
+    def _historical_what_to_show(self, symbol: str) -> str:
+        """Indices use TRADES for historical data; most work with this."""
+        return "TRADES"
+
     def _get_quote_sync(self, symbol: str, market: Market) -> Quote:
         ib = self._ensure_connected()
         tz = self._get_timezone(market)
 
-        contract = self._create_stock_contract(symbol, market)
-        ib.qualifyContracts(contract)
+        contract = self._create_contract(symbol, market)
+        try:
+            ib.qualifyContracts(contract)
+        except Exception:
+            # Contract not found -- return empty quote
+            return Quote(
+                symbol=symbol, market=market, price=0.0,
+                timestamp=datetime.now(tz),
+            )
 
         # Request market data
         ib.reqMktData(contract, "", False, False)
@@ -226,25 +261,27 @@ class IBKRProvider(MarketDataProvider):
                 change = round(price - prev_close, 2)
                 change_percent = round((change / prev_close) * 100, 2)
 
-        # If no live change data, fetch from recent history
-        if change is None and price > 0:
+        # If no live change data or no price at all, fetch from recent history
+        if change is None or price <= 0:
             try:
                 bars = ib.reqHistoricalData(
                     contract,
                     endDateTime="",
                     durationStr="5 D",
                     barSizeSetting="1 day",
-                    whatToShow="TRADES",
+                    whatToShow=self._historical_what_to_show(symbol),
                     useRTH=True,
                 )
                 if len(bars) >= 2:
                     prev_close = float(bars[-2].close)
                     latest_close = float(bars[-1].close)
-                    price = latest_close
+                    if price <= 0:
+                        price = latest_close
                     change = round(latest_close - prev_close, 2)
-                    change_percent = round((change / prev_close) * 100, 2)
+                    change_percent = round((change / prev_close) * 100, 2) if prev_close else None
                 elif len(bars) == 1:
-                    price = float(bars[-1].close)
+                    if price <= 0:
+                        price = float(bars[-1].close)
             except Exception:
                 pass
 
@@ -419,8 +456,13 @@ class IBKRProvider(MarketDataProvider):
         ib = self._ensure_connected()
         tz = self._get_timezone(market)
 
-        contract = self._create_stock_contract(symbol, market)
-        ib.qualifyContracts(contract)
+        contract = self._create_contract(symbol, market)
+        try:
+            ib.qualifyContracts(contract)
+        except Exception:
+            return PriceHistory(
+                symbol=symbol, market=market, interval=interval, bars=[]
+            )
 
         bar_size_map = {"5m": "5 mins", "1h": "1 hour", "1d": "1 day"}
         bar_size = bar_size_map.get(interval, "1 day")
@@ -434,7 +476,7 @@ class IBKRProvider(MarketDataProvider):
                 endDateTime="",
                 durationStr=duration,
                 barSizeSetting=bar_size,
-                whatToShow="TRADES",
+                whatToShow=self._historical_what_to_show(symbol),
                 useRTH=True,
             )
 
