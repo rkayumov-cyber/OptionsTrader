@@ -28,6 +28,14 @@ export function SymbolAnalysis({ symbol, market, onSymbolChange, defaultTab }: S
     if (defaultTab) setActiveTab(defaultTab)
   }, [defaultTab])
 
+  const TAB_HINTS: Record<string, string> = {
+    overview: "Price, IV rank, put/call ratio, and sentiment for the selected symbol. Use the command bar (/) to switch symbols.",
+    options: "Full option chain with calls and puts. Filter by expiration date to find specific contracts.",
+    volatility: "IV term structure, strike skew, and 3D volatility surface. Look for contango/backwardation and skew richness.",
+    strategy: "Build payoff diagrams from strategy templates and calculate probability of profit for any strike/expiration.",
+    research: "JPM volatility research data and earnings calendar. Check if your symbol has JPM trading candidates.",
+  }
+
   return (
     <div>
       {/* Persistent header - always visible */}
@@ -52,6 +60,9 @@ export function SymbolAnalysis({ symbol, market, onSymbolChange, defaultTab }: S
             Research
           </TabsTrigger>
         </TabsList>
+        {TAB_HINTS[activeTab] && (
+          <p className="text-muted-foreground text-[10px] mt-1 mb-0 px-1">{TAB_HINTS[activeTab]}</p>
+        )}
 
         {/* Tab 1: Overview */}
         <TabsContent value="overview">

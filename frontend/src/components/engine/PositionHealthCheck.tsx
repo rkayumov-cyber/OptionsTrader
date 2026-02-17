@@ -49,9 +49,15 @@ export default function PositionHealthCheck() {
 
   return (
     <div className="bg-zinc-900 border border-zinc-700 rounded-lg p-4">
-      <h3 className="text-zinc-400 text-xs font-medium uppercase tracking-wider mb-4">
+      <h3 className="text-zinc-400 text-xs font-medium uppercase tracking-wider mb-1">
         Position Health Check
       </h3>
+      <p className="text-zinc-600 text-[10px] mb-3 leading-relaxed">
+        Enter your open position details below and click Evaluate. The engine checks against
+        9 adjustment rules (A1: time roll, A3: delta breach, A6: vol spike, A8: regime change, etc.)
+        and 7 exit rules (X1: profit target, X3: stop loss, X5: 0DTE time stop, X7: daily P&L limit).
+        Rules are color-coded by priority: CRITICAL (red), HIGH (orange), MEDIUM (yellow), LOW (gray).
+      </p>
 
       {/* Input Form */}
       <div className="grid grid-cols-4 gap-2 mb-4">
@@ -102,6 +108,46 @@ export default function PositionHealthCheck() {
         </div>
       </div>
 
+      {/* Additional fields (collapsed row) */}
+      <div className="grid grid-cols-4 gap-2 mb-4">
+        <div>
+          <label className="text-zinc-500 text-[10px] block mb-1">Initial Delta</label>
+          <input
+            type="number"
+            value={form.initial_delta}
+            onChange={(e) => setForm({ ...form, initial_delta: Number(e.target.value) })}
+            className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300"
+          />
+        </div>
+        <div>
+          <label className="text-zinc-500 text-[10px] block mb-1">Current Delta</label>
+          <input
+            type="number"
+            value={form.current_delta}
+            onChange={(e) => setForm({ ...form, current_delta: Number(e.target.value) })}
+            className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300"
+          />
+        </div>
+        <div>
+          <label className="text-zinc-500 text-[10px] block mb-1">Max Profit</label>
+          <input
+            type="number"
+            value={form.max_profit}
+            onChange={(e) => setForm({ ...form, max_profit: Number(e.target.value) })}
+            className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300"
+          />
+        </div>
+        <div>
+          <label className="text-zinc-500 text-[10px] block mb-1">Premium Rcvd</label>
+          <input
+            type="number"
+            value={form.premium_received}
+            onChange={(e) => setForm({ ...form, premium_received: Number(e.target.value) })}
+            className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-300"
+          />
+        </div>
+      </div>
+
       <button
         onClick={handleEvaluate}
         disabled={mutation.isPending}
@@ -111,6 +157,13 @@ export default function PositionHealthCheck() {
       </button>
 
       {/* Results */}
+      {!health && !mutation.isPending && (
+        <div className="text-zinc-600 text-xs text-center py-6 border border-dashed border-zinc-700 rounded">
+          Fill in your position details above and click Evaluate to check against all 16 trading rules.
+          Start with just Strategy, DTE, and Family -- the other fields refine the analysis.
+        </div>
+      )}
+
       {health && (
         <div className="space-y-3">
           {/* Summary */}

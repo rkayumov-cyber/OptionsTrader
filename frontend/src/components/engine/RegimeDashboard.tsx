@@ -49,7 +49,7 @@ export default function RegimeDashboard() {
     <div className="space-y-4">
       {/* Regime Header */}
       <div className="bg-zinc-900 border border-zinc-700 rounded-lg p-4">
-        <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center justify-between mb-1">
           <h3 className="text-zinc-400 text-xs font-medium uppercase tracking-wider">
             Market Regime
           </h3>
@@ -57,6 +57,10 @@ export default function RegimeDashboard() {
             {new Date(regime.timestamp).toLocaleTimeString()}
           </span>
         </div>
+        <p className="text-zinc-600 text-[10px] mb-3 leading-relaxed">
+          6-priority classification: Crisis &gt; Liquidity Stress &gt; Event &gt; Vol Level &gt; Trend &gt; VVIX.
+          Confidence is scored by cross-checking IV-RV spread, skew, term structure, and credit signals.
+        </p>
 
         <div className="flex items-center gap-4 mb-4">
           {/* Regime Badge */}

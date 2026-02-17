@@ -15,6 +15,23 @@ export default function TailRiskPanel() {
 
   return (
     <div className="space-y-4">
+      {/* Tail Risk Intro */}
+      <div className="bg-zinc-900 border border-zinc-700 rounded-lg p-4">
+        <h3 className="text-zinc-400 text-xs font-medium uppercase tracking-wider mb-1">
+          Tail Risk Framework
+        </h3>
+        <p className="text-zinc-600 text-[10px] leading-relaxed">
+          This panel monitors three layers of portfolio protection.{" "}
+          <span className="text-zinc-500">Early Warnings</span> are leading indicators (credit spreads, bid-ask, correlation, VVIX)
+          that fire 2-4 weeks before equity vol spikes.{" "}
+          <span className="text-zinc-500">Hedge Allocation</span> shows the standing 2% annual budget split across
+          VIX call spreads, SPX put spreads, and scheduled OTM puts.{" "}
+          <span className="text-zinc-500">3-Pillar Tail Trading</span> activates when the 1M-3M term structure inverts
+          (fewer than 80 occurrences since 2004) -- signaling a rare opportunity to trade the recovery.
+          Crisis protocol triggers automatically when VIX &gt; 35 or 3+ warnings fire simultaneously.
+        </p>
+      </div>
+
       {/* Crisis Protocol */}
       {assessment.crisis_protocol_active && (
         <div className="bg-red-900/20 border border-red-500/30 rounded-lg p-4">

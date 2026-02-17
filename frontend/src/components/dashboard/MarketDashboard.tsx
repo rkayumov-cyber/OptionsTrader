@@ -35,6 +35,16 @@ export function MarketDashboard({
 
   return (
     <div className="space-y-2">
+      {/* Quick Start Guide */}
+      <div className="bg-zinc-900/50 border border-zinc-700/50 rounded px-3 py-2 flex items-center gap-4 text-[10px] text-zinc-500">
+        <span className="text-blue-400 font-medium uppercase tracking-wider shrink-0">Quick Start</span>
+        <span>
+          Press <kbd className="bb-kbd text-[9px]">/</kbd> to open the command bar and type a symbol (e.g., AAPL) to analyze it.
+          Use <kbd className="bb-kbd text-[9px]">F5</kbd> for the decision engine.
+          Click any symbol below to focus it. Switch data providers in the top-right header dropdown.
+        </span>
+      </div>
+
       {/* Top Row: VIX, Fear/Greed, P/C Ratio, Market Movers */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2">
         <VIXGauge className="h-full" />

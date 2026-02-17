@@ -26,7 +26,7 @@ export default function EventPlaybookViewer() {
 
   return (
     <div className="bg-zinc-900 border border-zinc-700 rounded-lg p-4">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-1">
         <h3 className="text-zinc-400 text-xs font-medium uppercase tracking-wider">
           Event Playbooks
         </h3>
@@ -56,6 +56,12 @@ export default function EventPlaybookViewer() {
           </button>
         </div>
       </div>
+      <p className="text-zinc-600 text-[10px] mb-3 leading-relaxed">
+        Each event playbook has 3 phases: <span className="text-blue-400">Pre-Event</span> (reduce risk, close naked positions),{" "}
+        <span className="text-yellow-400">Event Eve</span> (if trading, use defined-risk at reduced size),{" "}
+        <span className="text-green-400">Post-Event</span> (re-enter after IV crush). The 0DTE tab shows day-of-week
+        vol premium data -- Thursday has the highest premium (1.5x), Monday the lowest (0.3x).
+      </p>
 
       {/* Event Playbook */}
       {!show0DTE && (

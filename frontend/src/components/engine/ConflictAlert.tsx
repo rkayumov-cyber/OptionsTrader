@@ -6,7 +6,18 @@ export default function ConflictAlert() {
   if (!conflicts) return null
 
   const detected = conflicts.filter((c) => c.detected)
-  if (detected.length === 0) return null
+
+  if (detected.length === 0) {
+    return (
+      <div className="bg-zinc-800/30 border border-zinc-700/50 rounded-lg px-3 py-2 flex items-center gap-2">
+        <div className="w-2 h-2 rounded-full bg-green-500" />
+        <span className="text-green-400/80 text-xs">No signal conflicts detected</span>
+        <span className="text-zinc-600 text-[10px] ml-1">
+          -- the engine monitors 8 conflict scenarios (e.g., high IV + high VVIX, bullish trend + elevated vol) and will alert here when opposing signals require special handling
+        </span>
+      </div>
+    )
+  }
 
   return (
     <div className="bg-amber-900/10 border border-amber-500/20 rounded-lg p-3">

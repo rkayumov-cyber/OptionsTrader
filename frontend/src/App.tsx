@@ -388,6 +388,15 @@ function CommandBar({
   )
 }
 
+const ENGINE_TAB_DESCRIPTIONS: Record<string, string> = {
+  overview: "Real-time market regime classification and top strategy picks based on current conditions. Start here for a quick read on what the engine recommends right now.",
+  recommendations: "The strategy selector runs 19 templates through 7 entry gates and scores them across 6 dimensions. Set your NAV and objective to get parameterized trade ideas.",
+  health: "Evaluate any open position against 9 adjustment rules (A1-A9) and 7 exit rules (X1-X7). Enter your position details to see which rules are triggered and what action to take.",
+  "tail-risk": "Monitor portfolio hedging: early warning signals, standing hedge allocation, crisis protocol status, and the JPM 3-pillar tail trading signal.",
+  playbooks: "Pre-built trading playbooks for FOMC, earnings, CPI, NFP events, and 0DTE day-of-week strategies. Each playbook has 3 phases with specific timing, strategy, and sizing.",
+  reference: "Backtested performance tables from Goldman Sachs (10-27 year studies) and JPMorgan research. Use these to validate strategy selection and set realistic expectations.",
+}
+
 function EnginePage() {
   const [tab, setTab] = useState("overview")
   const tabs = [
@@ -416,6 +425,11 @@ function EnginePage() {
             {t.label}
           </button>
         ))}
+      </div>
+
+      {/* Tab Description */}
+      <div className="text-zinc-500 text-xs px-1 leading-relaxed">
+        {ENGINE_TAB_DESCRIPTIONS[tab]}
       </div>
 
       {/* Conflict Banner (always visible) */}
@@ -665,6 +679,8 @@ function Dashboard() {
         </div>
         <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
           <span>Press <kbd className="bb-kbd text-[9px]">/</kbd> for commands</span>
+          <span className="text-border">|</span>
+          <span>Press <kbd className="bb-kbd text-[9px]">?</kbd> for help</span>
           <span className="text-border">|</span>
           <span>{new Date().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" })}</span>
         </div>

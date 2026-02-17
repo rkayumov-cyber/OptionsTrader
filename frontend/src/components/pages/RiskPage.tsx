@@ -18,6 +18,13 @@ export function RiskPage({ defaultTab, onSelectSymbol }: RiskPageProps) {
     if (defaultTab) setActiveTab(defaultTab)
   }, [defaultTab])
 
+  const TAB_HINTS: Record<string, string> = {
+    scanner: "Find options opportunities: high IV stocks for premium selling, low IV for buying, and unusual volume spikes that may signal institutional activity.",
+    earnings: "Upcoming earnings dates with estimated EPS, pre-earnings IV levels, and expected post-earnings IV crush. Plan event trades around these dates.",
+    correlation: "Pairwise correlation matrix for any symbol group. Identify diversification opportunities or spot concentration risk in your portfolio.",
+    stress: "Simulate market scenarios (crash, rally, vol spike) against your open positions. See the P&L impact before it happens.",
+  }
+
   return (
     <Tabs value={activeTab} onValueChange={setActiveTab}>
       <TabsList className="h-8 bg-muted/50 border border-border">
@@ -34,6 +41,9 @@ export function RiskPage({ defaultTab, onSelectSymbol }: RiskPageProps) {
           Stress Test
         </TabsTrigger>
       </TabsList>
+      {TAB_HINTS[activeTab] && (
+        <p className="text-muted-foreground text-[10px] mt-1 mb-0 px-1">{TAB_HINTS[activeTab]}</p>
+      )}
 
       <TabsContent value="scanner">
         <OptionsScanner onSelectSymbol={onSelectSymbol} />

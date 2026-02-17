@@ -110,7 +110,7 @@ export default function StrategyRecommendations() {
 
   return (
     <div className="bg-zinc-900 border border-zinc-700 rounded-lg p-4">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-1">
         <h3 className="text-zinc-400 text-xs font-medium uppercase tracking-wider">
           Strategy Recommendations
         </h3>
@@ -133,6 +133,12 @@ export default function StrategyRecommendations() {
           </select>
         </div>
       </div>
+      <p className="text-zinc-600 text-[10px] mb-3 leading-relaxed">
+        Enter your portfolio value and choose an objective. The engine filters 19 strategy templates through
+        7 gates (IV rank, event avoidance, liquidity, regime compatibility, etc.) then scores the survivors
+        on edge, carry fit, tail risk, robustness, liquidity, and complexity. Top 3 are shown with
+        regime-adjusted parameters. Scores above 7 are strong; below 5 is low conviction.
+      </p>
 
       {isLoading ? (
         <div className="text-zinc-500 text-sm">Analyzing strategies...</div>
