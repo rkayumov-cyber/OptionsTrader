@@ -17,6 +17,7 @@ class MCPServerConfig(BaseModel):
     capabilities: list[str] = Field(default_factory=list)
     tool_mappings: dict[str, str] = Field(default_factory=dict)
     tool_call_wrapper: str | None = None  # e.g. "TOOL_CALL" for AV-style meta-tool servers
+    param_wrapper: str | None = None  # e.g. "params" — nest all args under this key
     param_mappings: dict[str, str] = Field(default_factory=dict)  # generic_arg -> server_arg
     tool_param_overrides: dict[str, dict[str, str]] = Field(
         default_factory=dict

@@ -37,6 +37,10 @@ class ToolMapper:
         if not isinstance(data, dict):
             return None
 
+        # Detect Twelve Data format: {"symbol": ..., "close": ..., "percent_change": ...}
+        if "close" in data and "percent_change" in data:
+            return ToolMapper._parse_td_quote(data, symbol, market)
+
         # Detect Alpha Vantage JSON format: {"Global Quote": {"01. symbol": ...}}
         if "Global Quote" in data:
             return ToolMapper._parse_av_quote(data["Global Quote"], symbol, market)
@@ -102,6 +106,28 @@ class ToolMapper:
             return None
 
     @staticmethod
+    def _parse_td_quote(data: dict, symbol: str, market: Market) -> Quote | None:
+        """Twelve Data GetQuote -> Quote."""
+        try:
+            price = float(data.get("close", 0))
+            if price <= 0:
+                return None
+            return Quote(
+                symbol=symbol,
+                market=market,
+                price=price,
+                change=_safe_float(data.get("change")),
+                change_percent=_safe_float(data.get("percent_change")),
+                bid=None,
+                ask=None,
+                volume=int(float(data.get("volume", 0))),
+                timestamp=datetime.now(),
+            )
+        except Exception as e:
+            logger.error("Failed to parse TD quote for %s: %s", symbol, e)
+            return None
+
+    @staticmethod
     def parse_price_history(
         data: Any, symbol: str, market: Market, interval: str = "1d"
     ) -> PriceHistory | None:
@@ -112,6 +138,10 @@ class ToolMapper:
         # AV TOOL_CALL may return CSV string for time series
         if isinstance(data, str) and "timestamp" in data.lower() and "," in data:
             return ToolMapper._parse_av_time_series_csv(data, symbol, market, interval)
+
+        # Detect Twelve Data format: {"meta": {...}, "values": [...], "status": "ok"}
+        if isinstance(data, dict) and "values" in data and "meta" in data:
+            return ToolMapper._parse_td_time_series(data, symbol, market, interval)
 
         # Detect AV Time Series JSON: {"Time Series (Daily)": {"2025-02-14": {...}}}
         if isinstance(data, dict):
@@ -226,6 +256,38 @@ class ToolMapper:
             return None
 
     @staticmethod
+    def _parse_td_time_series(
+        data: dict, symbol: str, market: Market, interval: str
+    ) -> PriceHistory | None:
+        """Twelve Data GetTimeSeries -> PriceHistory."""
+        try:
+            values = data.get("values", [])
+            if not values:
+                return None
+            bars = []
+            for v in values:
+                dt_str = v.get("datetime", "")
+                ts = datetime.fromisoformat(dt_str) if "T" in dt_str or " " in dt_str else datetime.strptime(dt_str, "%Y-%m-%d")
+                bars.append(
+                    PriceBar(
+                        timestamp=ts,
+                        open=float(v.get("open", 0)),
+                        high=float(v.get("high", 0)),
+                        low=float(v.get("low", 0)),
+                        close=float(v.get("close", 0)),
+                        volume=int(float(v.get("volume", 0))),
+                    )
+                )
+            if not bars:
+                return None
+            # TD returns newest first; reverse for chronological order
+            bars.reverse()
+            return PriceHistory(symbol=symbol, market=market, interval=interval, bars=bars)
+        except Exception as e:
+            logger.error("Failed to parse TD time series for %s: %s", symbol, e)
+            return None
+
+    @staticmethod
     def parse_market_sentiment(
         data: Any, symbol: str, market: Market
     ) -> MarketSentiment | None:
@@ -236,6 +298,10 @@ class ToolMapper:
         # Detect Alpha Vantage NEWS_SENTIMENT format (JSON with "feed" key)
         if isinstance(data, dict) and "feed" in data:
             return ToolMapper._parse_av_sentiment(data, symbol, market)
+
+        # Detect Twelve Data GetRecommendations: {"meta": {...}, "trends": {...}}
+        if isinstance(data, dict) and "trends" in data:
+            return ToolMapper._parse_td_recommendations(data, symbol, market)
 
         # AV NEWS_SENTIMENT can also return CSV with sentiment scores
         if isinstance(data, str) and "overall_sentiment_score" in data:
@@ -426,6 +492,59 @@ class ToolMapper:
             )
         except Exception as e:
             logger.error("Failed to parse AV sentiment CSV for %s: %s", symbol, e)
+            return None
+
+    @staticmethod
+    def _parse_td_recommendations(
+        data: dict, symbol: str, market: Market
+    ) -> MarketSentiment | None:
+        """Twelve Data GetRecommendations -> MarketSentiment."""
+        try:
+            trends = data.get("trends", {})
+            # Use current_month or first available period
+            period = trends.get("current_month") or next(iter(trends.values()), None)
+            if not period or not isinstance(period, dict):
+                return None
+
+            strong_buy = int(period.get("strong_buy", 0))
+            buy = int(period.get("buy", 0))
+            hold = int(period.get("hold", 0))
+            sell = int(period.get("sell", 0))
+            strong_sell = int(period.get("strong_sell", 0))
+
+            bullish = strong_buy + buy
+            bearish = sell + strong_sell
+            total = bullish + bearish + hold or 1
+
+            call_vol = bullish * 10000 + hold * 5000
+            put_vol = bearish * 10000 + hold * 5000
+            pc_ratio = put_vol / max(call_vol, 1)
+
+            bullish_pct = bullish / total
+            if bullish_pct > 0.7:
+                sentiment = "bullish"
+            elif bullish_pct > 0.55:
+                sentiment = "slightly_bullish"
+            elif bullish_pct > 0.4:
+                sentiment = "neutral"
+            elif bullish_pct > 0.25:
+                sentiment = "slightly_bearish"
+            else:
+                sentiment = "bearish"
+
+            return MarketSentiment(
+                symbol=symbol,
+                market=market,
+                put_call_ratio=round(pc_ratio, 3),
+                total_call_volume=call_vol,
+                total_put_volume=put_vol,
+                call_open_interest=call_vol * 10,
+                put_open_interest=put_vol * 10,
+                sentiment=sentiment,
+                timestamp=datetime.now(),
+            )
+        except Exception as e:
+            logger.error("Failed to parse TD recommendations for %s: %s", symbol, e)
             return None
 
     @staticmethod

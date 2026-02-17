@@ -210,14 +210,19 @@ class MCPClientManager:
         start = time.monotonic()
 
         try:
+            # Apply param_wrapper if configured (e.g. Twelve Data: nest under "params")
+            call_args = args or {}
+            if config and config.param_wrapper:
+                call_args = {config.param_wrapper: call_args}
+
             # For TOOL_CALL wrapper servers, wrap through the meta-tool
             if config and config.tool_call_wrapper:
                 result = await session.call_tool(
                     config.tool_call_wrapper,
-                    arguments={"tool_name": tool_name, "arguments": args or {}},
+                    arguments={"tool_name": tool_name, "arguments": call_args},
                 )
             else:
-                result = await session.call_tool(tool_name, arguments=args or {})
+                result = await session.call_tool(tool_name, arguments=call_args)
             duration = (time.monotonic() - start) * 1000
 
             self._call_counts[server_id] = self._call_counts.get(server_id, 0) + 1

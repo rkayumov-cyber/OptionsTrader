@@ -51,6 +51,29 @@ mcp_servers:
       NEWS_SENTIMENT:
         ticker: tickers
 
+  twelve_data:
+    name: "Twelve Data"
+    enabled: true
+    command: "python"
+    args: ["-m", "mcp_server_twelve_data", "-k", "${TWELVE_DATA_API_KEY}", "-n", "50"]
+    env:
+      TWELVE_DATA_API_KEY: "${TWELVE_DATA_API_KEY}"
+    capabilities: [quote, history, sentiment, earnings, technicals]
+    # Twelve Data tools require args nested under "params" key
+    param_wrapper: "params"
+    param_mappings:
+      ticker: symbol
+    tool_mappings:
+      get_quote: "GetQuote"
+      get_price_history: "GetTimeSeries"
+      get_sentiment: "GetRecommendations"
+      get_earnings: "GetEarnings"
+      get_company_overview: "GetProfile"
+      get_statistics: "GetStatistics"
+      get_income_statement: "GetIncomeStatement"
+      get_balance_sheet: "GetBalanceSheet"
+      get_cash_flow: "GetCashFlow"
+
   fred:
     name: "FRED Economic Data"
     enabled: false  # requires FRED_API_KEY env var
@@ -63,9 +86,10 @@ mcp_servers:
       get_economic_series: "fred_get_series"
 
 fallback_priority:
-  quote: [yahoo_finance, alpha_vantage]
+  quote: [yahoo_finance, twelve_data, alpha_vantage]
   options: [yahoo_finance, alpha_vantage]
-  history: [yahoo_finance, alpha_vantage]
-  sentiment: [yahoo_finance, alpha_vantage]
+  history: [yahoo_finance, twelve_data, alpha_vantage]
+  sentiment: [yahoo_finance, twelve_data, alpha_vantage]
   news: [alpha_vantage, yahoo_finance]
+  earnings: [twelve_data, yahoo_finance]
   economic_data: [fred]
