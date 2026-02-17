@@ -23,9 +23,23 @@ class ToolMapper:
 
     @staticmethod
     def parse_quote(data: Any, symbol: str, market: Market) -> Quote | None:
-        """Yahoo get_stock_info JSON -> Quote."""
-        if not data or not isinstance(data, dict):
+        """Parse quote from Yahoo or Alpha Vantage format."""
+        if not data:
             return None
+
+        # AV TOOL_CALL returns CSV string for GLOBAL_QUOTE
+        if isinstance(data, str) and "price" in data and "," in data:
+            parsed = _parse_csv_row(data)
+            if parsed:
+                return ToolMapper._parse_av_quote(parsed, symbol, market)
+            return None
+
+        if not isinstance(data, dict):
+            return None
+
+        # Detect Alpha Vantage JSON format: {"Global Quote": {"01. symbol": ...}}
+        if "Global Quote" in data:
+            return ToolMapper._parse_av_quote(data["Global Quote"], symbol, market)
 
         try:
             price = (
@@ -55,12 +69,55 @@ class ToolMapper:
             return None
 
     @staticmethod
+    def _parse_av_quote(gq: dict, symbol: str, market: Market) -> Quote | None:
+        """Alpha Vantage Global Quote -> Quote.
+
+        Handles both JSON format (numbered keys like "05. price")
+        and CSV-parsed format (simple keys like "price").
+        """
+        try:
+            # Try CSV-parsed format first (simple keys), then JSON format (numbered keys)
+            price = float(gq.get("price") or gq.get("05. price", 0))
+            change = _safe_float(gq.get("change") or gq.get("09. change"))
+            change_pct_str = gq.get("changePercent") or gq.get("10. change percent", "0%")
+            change_pct = _safe_float(change_pct_str.rstrip("%")) if isinstance(change_pct_str, str) else _safe_float(change_pct_str)
+            volume = int(float(gq.get("volume") or gq.get("06. volume", 0)))
+
+            if price <= 0:
+                return None
+
+            return Quote(
+                symbol=symbol,
+                market=market,
+                price=price,
+                change=change,
+                change_percent=change_pct,
+                bid=None,
+                ask=None,
+                volume=volume,
+                timestamp=datetime.now(),
+            )
+        except Exception as e:
+            logger.error("Failed to parse AV quote for %s: %s", symbol, e)
+            return None
+
+    @staticmethod
     def parse_price_history(
         data: Any, symbol: str, market: Market, interval: str = "1d"
     ) -> PriceHistory | None:
-        """Yahoo get_historical_stock_prices JSON -> PriceHistory."""
+        """Parse price history from Yahoo or Alpha Vantage format."""
         if not data:
             return None
+
+        # AV TOOL_CALL may return CSV string for time series
+        if isinstance(data, str) and "timestamp" in data.lower() and "," in data:
+            return ToolMapper._parse_av_time_series_csv(data, symbol, market, interval)
+
+        # Detect AV Time Series JSON: {"Time Series (Daily)": {"2025-02-14": {...}}}
+        if isinstance(data, dict):
+            for key in data:
+                if "Time Series" in key:
+                    return ToolMapper._parse_av_time_series(data[key], symbol, market, interval)
 
         try:
             bars_data = data if isinstance(data, list) else data.get("prices", [])
@@ -101,12 +158,88 @@ class ToolMapper:
             return None
 
     @staticmethod
+    def _parse_av_time_series(
+        ts_data: dict, symbol: str, market: Market, interval: str
+    ) -> PriceHistory | None:
+        """Alpha Vantage Time Series -> PriceHistory."""
+        try:
+            bars = []
+            for date_str, values in sorted(ts_data.items()):
+                ts = datetime.fromisoformat(date_str) if "T" in date_str else datetime.strptime(date_str, "%Y-%m-%d")
+                bars.append(
+                    PriceBar(
+                        timestamp=ts,
+                        open=float(values.get("1. open", 0)),
+                        high=float(values.get("2. high", 0)),
+                        low=float(values.get("3. low", 0)),
+                        close=float(values.get("4. close", 0)),
+                        volume=int(float(values.get("5. volume", 0))),
+                    )
+                )
+
+            if not bars:
+                return None
+
+            return PriceHistory(
+                symbol=symbol,
+                market=market,
+                interval=interval,
+                bars=bars,
+            )
+        except Exception as e:
+            logger.error("Failed to parse AV time series for %s: %s", symbol, e)
+            return None
+
+    @staticmethod
+    def _parse_av_time_series_csv(
+        csv_text: str, symbol: str, market: Market, interval: str
+    ) -> PriceHistory | None:
+        """Parse AV time series CSV (multi-row) into PriceHistory."""
+        try:
+            lines = [l.strip() for l in csv_text.strip().splitlines() if l.strip()]
+            if len(lines) < 2:
+                return None
+            headers = [h.strip().lower() for h in lines[0].split(",")]
+            bars = []
+            for line in lines[1:]:
+                vals = [v.strip() for v in line.split(",")]
+                row = dict(zip(headers, vals))
+                ts_str = row.get("timestamp") or row.get("date") or row.get("time")
+                if not ts_str:
+                    continue
+                ts = datetime.fromisoformat(ts_str) if "T" in ts_str else datetime.strptime(ts_str, "%Y-%m-%d")
+                bars.append(
+                    PriceBar(
+                        timestamp=ts,
+                        open=float(row.get("open", 0)),
+                        high=float(row.get("high", 0)),
+                        low=float(row.get("low", 0)),
+                        close=float(row.get("close", 0)),
+                        volume=int(float(row.get("volume", 0))),
+                    )
+                )
+            if not bars:
+                return None
+            return PriceHistory(symbol=symbol, market=market, interval=interval, bars=bars)
+        except Exception as e:
+            logger.error("Failed to parse AV time series CSV for %s: %s", symbol, e)
+            return None
+
+    @staticmethod
     def parse_market_sentiment(
         data: Any, symbol: str, market: Market
     ) -> MarketSentiment | None:
-        """Yahoo get_recommendations JSON -> MarketSentiment."""
+        """Parse sentiment from Yahoo recommendations or AV NEWS_SENTIMENT."""
         if not data:
             return None
+
+        # Detect Alpha Vantage NEWS_SENTIMENT format (JSON with "feed" key)
+        if isinstance(data, dict) and "feed" in data:
+            return ToolMapper._parse_av_sentiment(data, symbol, market)
+
+        # AV NEWS_SENTIMENT can also return CSV with sentiment scores
+        if isinstance(data, str) and "overall_sentiment_score" in data:
+            return ToolMapper._parse_av_sentiment_csv(data, symbol, market)
 
         try:
             # Yahoo recommendations returns analyst sentiments
@@ -170,6 +303,129 @@ class ToolMapper:
             )
         except Exception as e:
             logger.error("Failed to parse sentiment for %s: %s", symbol, e)
+            return None
+
+    @staticmethod
+    def _parse_av_sentiment(
+        data: dict, symbol: str, market: Market
+    ) -> MarketSentiment | None:
+        """Alpha Vantage NEWS_SENTIMENT feed -> MarketSentiment."""
+        try:
+            feed = data.get("feed", [])
+            if not feed:
+                return None
+
+            bullish = 0
+            bearish = 0
+            neutral = 0
+
+            for article in feed:
+                # Look for ticker-specific sentiment
+                ticker_sentiments = article.get("ticker_sentiment", [])
+                for ts in ticker_sentiments:
+                    if ts.get("ticker", "").upper() == symbol.upper():
+                        score = float(ts.get("ticker_sentiment_score", 0))
+                        if score > 0.15:
+                            bullish += 1
+                        elif score < -0.15:
+                            bearish += 1
+                        else:
+                            neutral += 1
+                        break
+                else:
+                    # Use overall sentiment if ticker-specific not found
+                    score = float(article.get("overall_sentiment_score", 0))
+                    if score > 0.15:
+                        bullish += 1
+                    elif score < -0.15:
+                        bearish += 1
+                    else:
+                        neutral += 1
+
+            total = bullish + bearish + neutral
+            if total == 0:
+                total = 1
+
+            call_vol = bullish * 10000 + neutral * 5000
+            put_vol = bearish * 10000 + neutral * 5000
+            pc_ratio = put_vol / max(call_vol, 1)
+
+            bullish_pct = bullish / total
+            if bullish_pct > 0.6:
+                sentiment = "bullish"
+            elif bullish_pct > 0.45:
+                sentiment = "slightly_bullish"
+            elif bullish_pct > 0.3:
+                sentiment = "neutral"
+            elif bullish_pct > 0.15:
+                sentiment = "slightly_bearish"
+            else:
+                sentiment = "bearish"
+
+            return MarketSentiment(
+                symbol=symbol,
+                market=market,
+                put_call_ratio=round(pc_ratio, 3),
+                total_call_volume=call_vol,
+                total_put_volume=put_vol,
+                call_open_interest=call_vol * 10,
+                put_open_interest=put_vol * 10,
+                sentiment=sentiment,
+                timestamp=datetime.now(),
+            )
+        except Exception as e:
+            logger.error("Failed to parse AV sentiment for %s: %s", symbol, e)
+            return None
+
+    @staticmethod
+    def _parse_av_sentiment_csv(
+        csv_text: str, symbol: str, market: Market
+    ) -> MarketSentiment | None:
+        """Parse AV NEWS_SENTIMENT CSV into MarketSentiment."""
+        try:
+            lines = [l.strip() for l in csv_text.strip().splitlines() if l.strip()]
+            if len(lines) < 2:
+                return None
+            headers = [h.strip().lower() for h in lines[0].split(",")]
+            bullish = bearish = neutral = 0
+            for line in lines[1:]:
+                vals = [v.strip() for v in line.split(",")]
+                row = dict(zip(headers, vals))
+                score = float(row.get("overall_sentiment_score", 0))
+                if score > 0.15:
+                    bullish += 1
+                elif score < -0.15:
+                    bearish += 1
+                else:
+                    neutral += 1
+            total = bullish + bearish + neutral or 1
+            call_vol = bullish * 10000 + neutral * 5000
+            put_vol = bearish * 10000 + neutral * 5000
+            pc_ratio = put_vol / max(call_vol, 1)
+            bullish_pct = bullish / total
+            if bullish_pct > 0.6:
+                sentiment = "bullish"
+            elif bullish_pct > 0.45:
+                sentiment = "slightly_bullish"
+            elif bullish_pct > 0.3:
+                sentiment = "neutral"
+            elif bullish_pct > 0.15:
+                sentiment = "slightly_bearish"
+            else:
+                sentiment = "bearish"
+            return MarketSentiment(
+                symbol=symbol,
+                market=market,
+                put_call_ratio=round(pc_ratio, 3),
+                total_call_volume=call_vol,
+                total_put_volume=put_vol,
+                call_open_interest=call_vol * 10,
+                put_open_interest=put_vol * 10,
+                sentiment=sentiment,
+                timestamp=datetime.now(),
+            )
+        except Exception as e:
+            logger.error("Failed to parse AV sentiment CSV for %s: %s", symbol, e)
             return None
 
     @staticmethod
@@ -354,6 +610,18 @@ class ToolMapper:
         except Exception as e:
             logger.error("Failed to parse option chain for %s: %s", symbol, e)
             return None
+
+
+def _parse_csv_row(csv_text: str) -> dict | None:
+    """Parse a 2-line CSV (header + single data row) into a dict."""
+    lines = [l.strip() for l in csv_text.strip().splitlines() if l.strip()]
+    if len(lines) < 2:
+        return None
+    headers = [h.strip() for h in lines[0].split(",")]
+    values = [v.strip() for v in lines[1].split(",")]
+    if len(headers) != len(values):
+        return None
+    return dict(zip(headers, values))
 
 
 def _safe_float(val: Any) -> float | None:

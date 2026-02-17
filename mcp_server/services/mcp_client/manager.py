@@ -1,8 +1,10 @@
 """MCPClientManager - launches and manages external MCP server processes via stdio."""
 
 import asyncio
+import json
 import logging
 import os
+import re
 import time
 from contextlib import AsyncExitStack
 from pathlib import Path
@@ -45,7 +47,7 @@ class MCPClientManager:
         with open(self._config_path) as f:
             raw = yaml.safe_load(f) or {}
 
-        # Expand env vars in server env
+        # Expand env vars in server env and args
         servers = {}
         for server_id, server_data in raw.get("mcp_servers", {}).items():
             if "env" in server_data:
@@ -57,6 +59,18 @@ class MCPClientManager:
                     else:
                         expanded_env[k] = v
                 server_data["env"] = expanded_env
+            # Expand ${ENV_VAR} in args list (e.g. API keys passed as CLI args)
+            if "args" in server_data:
+                expanded_args = []
+                for arg in server_data["args"]:
+                    if isinstance(arg, str) and "${" in arg:
+                        arg = re.sub(
+                            r"\$\{(\w+)\}",
+                            lambda m: os.environ.get(m.group(1), ""),
+                            arg,
+                        )
+                    expanded_args.append(arg)
+                server_data["args"] = expanded_args
             servers[server_id] = MCPServerConfig(**server_data)
 
         return MCPServersConfig(
@@ -130,8 +144,12 @@ class MCPClientManager:
         await session.initialize()
 
         # Discover available tools
-        tools_result = await session.list_tools()
-        tool_names = [t.name for t in tools_result.tools]
+        if config.tool_call_wrapper:
+            # Wrapper servers (e.g. AV) expose sub-tools via TOOL_LIST
+            tool_names = await self._discover_wrapper_tools(session)
+        else:
+            tools_result = await session.list_tools()
+            tool_names = [t.name for t in tools_result.tools]
 
         self._sessions[server_id] = session
         self._call_counts[server_id] = 0
@@ -146,11 +164,34 @@ class MCPClientManager:
         self._statuses[server_id].error = None
 
         logger.info(
-            "Connected to %s: %d tools available: %s",
+            "Connected to %s: %d tools available%s",
             server_id,
             len(tool_names),
-            tool_names,
+            f" (wrapper: {config.tool_call_wrapper})" if config.tool_call_wrapper else f": {tool_names}",
         )
+
+    async def _discover_wrapper_tools(self, session: ClientSession) -> list[str]:
+        """Discover sub-tools from a TOOL_LIST meta-tool (e.g. Alpha Vantage)."""
+        try:
+            result = await session.call_tool("TOOL_LIST", arguments={})
+            if result.isError:
+                logger.warning("TOOL_LIST failed: %s", result.content)
+                return ["TOOL_CALL", "TOOL_LIST", "TOOL_GET"]
+
+            for item in result.content:
+                if hasattr(item, "text"):
+                    try:
+                        data = json.loads(item.text)
+                        if isinstance(data, list):
+                            return [t.get("name", t) if isinstance(t, dict) else str(t) for t in data]
+                        if isinstance(data, dict) and "tools" in data:
+                            return [t.get("name", t) if isinstance(t, dict) else str(t) for t in data["tools"]]
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            return ["TOOL_CALL", "TOOL_LIST", "TOOL_GET"]
+        except Exception as e:
+            logger.warning("Failed to discover wrapper tools: %s", e)
+            return ["TOOL_CALL", "TOOL_LIST", "TOOL_GET"]
 
     async def call_tool(
         self, server_id: str, tool_name: str, args: dict[str, Any] | None = None
@@ -165,10 +206,18 @@ class MCPClientManager:
             )
 
         session = self._sessions[server_id]
+        config = self._config.mcp_servers.get(server_id)
         start = time.monotonic()
 
         try:
-            result = await session.call_tool(tool_name, arguments=args or {})
+            # For TOOL_CALL wrapper servers, wrap through the meta-tool
+            if config and config.tool_call_wrapper:
+                result = await session.call_tool(
+                    config.tool_call_wrapper,
+                    arguments={"tool_name": tool_name, "arguments": args or {}},
+                )
+            else:
+                result = await session.call_tool(tool_name, arguments=args or {})
             duration = (time.monotonic() - start) * 1000
 
             self._call_counts[server_id] = self._call_counts.get(server_id, 0) + 1
@@ -194,13 +243,21 @@ class MCPClientManager:
             data = None
             for content_item in result.content:
                 if hasattr(content_item, "text"):
-                    import json
-
                     try:
                         data = json.loads(content_item.text)
                     except (json.JSONDecodeError, TypeError):
                         data = content_item.text
                     break
+
+            # Detect API rate limit / error responses (e.g. AV "Information" key)
+            if isinstance(data, dict) and "Information" in data and len(data) == 1:
+                return MCPToolCallResult(
+                    server_id=server_id,
+                    tool_name=tool_name,
+                    success=False,
+                    error=data["Information"][:200],
+                    duration_ms=duration,
+                )
 
             return MCPToolCallResult(
                 server_id=server_id,
@@ -223,6 +280,32 @@ class MCPClientManager:
                 duration_ms=duration,
             )
 
+    def _translate_args(
+        self,
+        config: MCPServerConfig,
+        tool_name: str,
+        args: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Apply param_mappings and tool_param_overrides to translate arg names."""
+        if not args:
+            return {}
+        if not config.param_mappings and not config.tool_param_overrides:
+            return args
+
+        # Merge default mappings with tool-specific overrides
+        mappings = dict(config.param_mappings)
+        tool_overrides = config.tool_param_overrides.get(tool_name, {})
+        mappings.update(tool_overrides)
+
+        if not mappings:
+            return args
+
+        translated = {}
+        for k, v in args.items():
+            new_key = mappings.get(k, k)
+            translated[new_key] = v
+        return translated
+
     async def call_tool_with_fallback(
         self,
         data_type: str,
@@ -244,7 +327,10 @@ class MCPClientManager:
             if not tool_name:
                 continue
 
-            result = await self.call_tool(server_id, tool_name, args)
+            # Translate arg names for this server/tool combination
+            translated_args = self._translate_args(config, tool_name, args)
+
+            result = await self.call_tool(server_id, tool_name, translated_args)
             if result.success:
                 return result
 

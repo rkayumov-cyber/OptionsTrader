@@ -134,8 +134,8 @@ class AggregatedProvider(MarketDataProvider):
     async def get_iv_analysis(self, symbol: str, market: Market) -> IVAnalysis:
         try:
             return await self._primary.get_iv_analysis(symbol, market)
-        except NotImplementedError:
-            logger.debug("Primary doesn't support IV analysis, trying MCP")
+        except Exception as e:
+            logger.debug("Primary IV analysis failed (%s), trying MCP", type(e).__name__)
             # Get stock info for price/52-week data
             result = await self._mcp.call_tool_with_fallback(
                 "quote", "get_quote", {"ticker": symbol}
@@ -168,8 +168,8 @@ class AggregatedProvider(MarketDataProvider):
     ) -> MarketSentiment:
         try:
             return await self._primary.get_market_sentiment(symbol, market)
-        except NotImplementedError:
-            logger.debug("Primary doesn't support sentiment, trying MCP")
+        except Exception as e:
+            logger.debug("Primary sentiment failed (%s), trying MCP", type(e).__name__)
             result = await self._mcp.call_tool_with_fallback(
                 "sentiment", "get_sentiment",
                 {"ticker": symbol, "recommendation_type": "upgrades_downgrades"},

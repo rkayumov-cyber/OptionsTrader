@@ -20,6 +20,37 @@ mcp_servers:
       get_financials: "get_financial_statement"
       get_option_expirations: "get_option_expiration_dates"
 
+  alpha_vantage:
+    name: "Alpha Vantage"
+    enabled: true
+    command: "python"
+    args: ["-m", "uv", "tool", "run", "av-mcp", "${ALPHA_VANTAGE_API_KEY}"]
+    env:
+      ALPHA_VANTAGE_API_KEY: "${ALPHA_VANTAGE_API_KEY}"
+    capabilities: [quote, history, news, sentiment, economic_data, commodities, options, technicals]
+    # AV uses a TOOL_CALL wrapper — tool_mappings map our keys to AV sub-tool names
+    tool_call_wrapper: "TOOL_CALL"
+    tool_mappings:
+      get_quote: "GLOBAL_QUOTE"
+      get_price_history: "TIME_SERIES_DAILY"
+      get_news: "NEWS_SENTIMENT"
+      get_sentiment: "NEWS_SENTIMENT"
+      get_option_chain: "REALTIME_OPTIONS"
+      get_top_movers: "TOP_GAINERS_LOSERS"
+      get_earnings_transcript: "EARNINGS_CALL_TRANSCRIPT"
+      get_insider_transactions: "INSIDER_TRANSACTIONS"
+      get_company_overview: "OVERVIEW"
+      get_income_statement: "INCOME_STATEMENT"
+      get_balance_sheet: "BALANCE_SHEET"
+      get_cash_flow: "CASH_FLOW"
+    # Default: rename generic 'ticker' arg to AV's 'symbol'
+    param_mappings:
+      ticker: symbol
+    # Per-tool overrides where AV uses a different param name
+    tool_param_overrides:
+      NEWS_SENTIMENT:
+        ticker: tickers
+
   fred:
     name: "FRED Economic Data"
     enabled: false  # requires FRED_API_KEY env var
@@ -32,9 +63,9 @@ mcp_servers:
       get_economic_series: "fred_get_series"
 
 fallback_priority:
-  quote: [yahoo_finance]
-  options: [yahoo_finance]
-  history: [yahoo_finance]
-  sentiment: [yahoo_finance]
-  news: [yahoo_finance]
+  quote: [yahoo_finance, alpha_vantage]
+  options: [yahoo_finance, alpha_vantage]
+  history: [yahoo_finance, alpha_vantage]
+  sentiment: [yahoo_finance, alpha_vantage]
+  news: [alpha_vantage, yahoo_finance]
   economic_data: [fred]

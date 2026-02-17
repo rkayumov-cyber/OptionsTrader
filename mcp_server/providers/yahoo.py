@@ -326,12 +326,17 @@ class YahooProvider(MarketDataProvider):
             else:
                 sentiment = "bearish"
 
+            call_oi = sum(c.open_interest or 0 for c in chain.calls)
+            put_oi = sum(p.open_interest or 0 for p in chain.puts)
+
             return MarketSentiment(
                 symbol=symbol,
                 market=market,
                 put_call_ratio=pc_ratio,
                 total_call_volume=call_volume,
                 total_put_volume=put_volume,
+                call_open_interest=call_oi,
+                put_open_interest=put_oi,
                 sentiment=sentiment,
                 timestamp=datetime.now(self._get_timezone(market)),
             )
@@ -342,6 +347,8 @@ class YahooProvider(MarketDataProvider):
                 put_call_ratio=0.85,
                 total_call_volume=100000,
                 total_put_volume=85000,
+                call_open_interest=1000000,
+                put_open_interest=850000,
                 sentiment="neutral",
                 timestamp=datetime.now(self._get_timezone(market)),
             )
