@@ -11,6 +11,8 @@ from mcp_server.models import (
     Market,
     OptionChain,
     OptionContract,
+    PriceBar,
+    PriceHistory,
     Quote,
     VolatilitySurface,
 )
@@ -367,3 +369,71 @@ class SAXOProvider(MarketDataProvider):
             put_ivs=put_ivs,
             timestamp=datetime.now(self._get_timezone(market)),
         )
+
+    async def get_price_history(
+        self,
+        symbol: str,
+        market: Market,
+        interval: str = "1d",
+        limit: int = 30,
+    ) -> PriceHistory:
+        """Get historical price data from SAXO."""
+        instrument = await self._search_instrument(symbol, market)
+
+        if not instrument:
+            return PriceHistory(
+                symbol=symbol,
+                market=market,
+                interval=interval,
+                bars=[],
+            )
+
+        uic = instrument.get("Identifier")
+        asset_type = instrument.get("AssetType", "Stock")
+
+        client = await self._get_client()
+
+        # Map interval to SAXO horizon
+        horizon_map = {
+            "5m": 60,      # 1 hour of 5m bars
+            "1h": 1440,    # 1 day of 1h bars
+            "1d": 10080,   # 1 week of daily bars
+        }
+        horizon = horizon_map.get(interval, 10080)
+
+        try:
+            params = {
+                "Uic": uic,
+                "AssetType": asset_type,
+                "Horizon": horizon,
+                "Count": limit,
+            }
+
+            response = await client.get("/chart/v1/charts", params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            bars = []
+            for bar_data in data.get("Data", []):
+                bars.append(PriceBar(
+                    timestamp=datetime.fromisoformat(bar_data["Time"].replace("Z", "+00:00")),
+                    open=float(bar_data.get("Open", 0)),
+                    high=float(bar_data.get("High", 0)),
+                    low=float(bar_data.get("Low", 0)),
+                    close=float(bar_data.get("Close", 0)),
+                    volume=int(bar_data.get("Volume", 0)),
+                ))
+
+            return PriceHistory(
+                symbol=symbol,
+                market=market,
+                interval=interval,
+                bars=bars,
+            )
+        except httpx.HTTPError:
+            return PriceHistory(
+                symbol=symbol,
+                market=market,
+                interval=interval,
+                bars=[],
+            )
