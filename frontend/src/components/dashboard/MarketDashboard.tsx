@@ -11,6 +11,7 @@ import { BondRatesPanel } from "./BondRatesPanel"
 import { CommoditiesPanel } from "./CommoditiesPanel"
 import { SectorHeatmap } from "./SectorHeatmap"
 import { MarketBreadthPanel } from "./MarketBreadthPanel"
+import { MCPServersPanel } from "./MCPServersPanel"
 import type { Market } from "@/lib/api"
 
 interface MarketDashboardProps {
@@ -88,6 +89,9 @@ export function MarketDashboard({
 
       {/* Strategy Suggestions Row */}
       <StrategySuggestions symbol={focusedSymbol} market={focusedMarket} />
+
+      {/* MCP Data Sources */}
+      <MCPServersPanel />
 
       {/* Selected Symbol Indicator */}
       {focusedSymbol && (

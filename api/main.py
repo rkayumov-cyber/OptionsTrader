@@ -1,5 +1,7 @@
 """FastAPI REST API for Options Trader."""
 
+import logging
+from contextlib import asynccontextmanager
 from datetime import datetime, date
 from typing import Literal
 import math
@@ -30,12 +32,37 @@ from mcp_server.services.journal import journal_service
 from mcp_server.services.alerts import alert_service
 from mcp_server.services.jpm_research import jpm_research_service
 from mcp_server.models import JPMStrategyType, JPMScreenType
+from mcp_server.services.mcp_client import MCPClientManager, AggregatedProvider
+
+logger = logging.getLogger(__name__)
+
+# MCP Client Manager singleton
+mcp_manager = MCPClientManager()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup/shutdown lifecycle for MCP client connections."""
+    # Startup: connect to external MCP servers
+    try:
+        await mcp_manager.startup()
+        logger.info("MCP Client Manager started successfully")
+    except Exception as e:
+        logger.warning("MCP Client Manager startup failed (non-fatal): %s", e)
+    yield
+    # Shutdown: disconnect all MCP servers
+    try:
+        await mcp_manager.shutdown()
+        logger.info("MCP Client Manager shut down")
+    except Exception as e:
+        logger.warning("MCP Client Manager shutdown error: %s", e)
 
 
 app = FastAPI(
     title="Options Trader API",
     description="REST API for cross-market equities options data",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # CORS middleware for frontend
@@ -94,8 +121,9 @@ watchlist: list[dict] = [
 
 
 def get_provider() -> MarketDataProvider:
-    """Get active provider."""
-    return providers[active_provider_name]
+    """Get active provider, wrapped with MCP fallbacks."""
+    primary = providers[active_provider_name]
+    return AggregatedProvider(primary, mcp_manager)
 
 
 # Request/Response models
@@ -424,6 +452,54 @@ async def health_check():
         "provider": active_provider_name,
         "timestamp": datetime.now().isoformat(),
     }
+
+
+# =============================================================================
+# MCP SERVER MANAGEMENT ENDPOINTS
+# =============================================================================
+
+
+@app.get("/api/mcp-servers")
+async def list_mcp_servers():
+    """List all MCP servers with status."""
+    statuses = mcp_manager.get_all_statuses()
+    return {"servers": [s.model_dump() for s in statuses]}
+
+
+@app.get("/api/mcp-servers/{server_id}")
+async def get_mcp_server(server_id: str):
+    """Get single MCP server details."""
+    status = mcp_manager.get_status(server_id)
+    if not status:
+        raise HTTPException(status_code=404, detail=f"Server '{server_id}' not found")
+    return status.model_dump()
+
+
+@app.get("/api/mcp-servers/{server_id}/tools")
+async def get_mcp_server_tools(server_id: str):
+    """Get available tools on an MCP server."""
+    status = mcp_manager.get_status(server_id)
+    if not status:
+        raise HTTPException(status_code=404, detail=f"Server '{server_id}' not found")
+    return {"server_id": server_id, "tools": status.tools, "count": status.tool_count}
+
+
+@app.post("/api/mcp-servers/{server_id}/toggle")
+async def toggle_mcp_server(server_id: str):
+    """Enable/disable an MCP server."""
+    status = await mcp_manager.toggle_server(server_id)
+    if not status:
+        raise HTTPException(status_code=404, detail=f"Server '{server_id}' not found")
+    return status.model_dump()
+
+
+@app.post("/api/mcp-servers/{server_id}/reconnect")
+async def reconnect_mcp_server(server_id: str):
+    """Force reconnect an MCP server."""
+    status = await mcp_manager.reconnect_server(server_id)
+    if not status:
+        raise HTTPException(status_code=404, detail=f"Server '{server_id}' not found")
+    return status.model_dump()
 
 
 # =============================================================================

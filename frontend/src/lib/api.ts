@@ -1287,6 +1287,59 @@ export async function getMarketIndicators(): Promise<MarketIndicatorsResponse> {
 }
 
 // =============================================================================
+// MCP SERVER TYPES & API
+// =============================================================================
+
+export interface MCPServerStatus {
+  id: string
+  name: string
+  enabled: boolean
+  status: "connected" | "disconnected" | "error" | "connecting"
+  tools: string[]
+  tool_count: number
+  error: string | null
+  connected_at: string | null
+  call_count: number
+  avg_response_ms: number
+  capabilities: string[]
+}
+
+export interface MCPServersResponse {
+  servers: MCPServerStatus[]
+}
+
+export interface MCPToolsResponse {
+  server_id: string
+  tools: string[]
+  count: number
+}
+
+export async function getMCPServers(): Promise<MCPServersResponse> {
+  const { data } = await api.get("/api/mcp-servers")
+  return data
+}
+
+export async function getMCPServer(serverId: string): Promise<MCPServerStatus> {
+  const { data } = await api.get(`/api/mcp-servers/${serverId}`)
+  return data
+}
+
+export async function getMCPServerTools(serverId: string): Promise<MCPToolsResponse> {
+  const { data } = await api.get(`/api/mcp-servers/${serverId}/tools`)
+  return data
+}
+
+export async function toggleMCPServer(serverId: string): Promise<MCPServerStatus> {
+  const { data } = await api.post(`/api/mcp-servers/${serverId}/toggle`)
+  return data
+}
+
+export async function reconnectMCPServer(serverId: string): Promise<MCPServerStatus> {
+  const { data } = await api.post(`/api/mcp-servers/${serverId}/reconnect`)
+  return data
+}
+
+// =============================================================================
 // TYPE ALIAS FOR COMPATIBILITY
 // =============================================================================
 

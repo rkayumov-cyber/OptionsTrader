@@ -1,0 +1,40 @@
+# External MCP server connections for supplementary data sources
+# These servers provide fallback data when the primary provider
+# doesn't support certain endpoints (IV analysis, sentiment, news, etc.)
+
+mcp_servers:
+  yahoo_finance:
+    name: "Yahoo Finance"
+    enabled: true
+    command: "python"
+    args: ["-m", "yahoo_finance_mcp.server"]
+    env: {}
+    capabilities: [quote, options, history, news, sentiment, earnings]
+    tool_mappings:
+      get_quote: "get_stock_info"
+      get_option_chain: "get_option_chain"
+      get_price_history: "get_historical_stock_prices"
+      get_sentiment: "get_recommendations"
+      get_news: "get_yahoo_finance_news"
+      get_earnings: "get_stock_actions"
+      get_financials: "get_financial_statement"
+      get_option_expirations: "get_option_expiration_dates"
+
+  fred:
+    name: "FRED Economic Data"
+    enabled: false  # requires FRED_API_KEY env var
+    command: "npx"
+    args: ["@stefanoamorelli/fred-mcp-server"]
+    env:
+      FRED_API_KEY: "${FRED_API_KEY}"
+    capabilities: [economic_data, rates]
+    tool_mappings:
+      get_economic_series: "fred_get_series"
+
+fallback_priority:
+  quote: [yahoo_finance]
+  options: [yahoo_finance]
+  history: [yahoo_finance]
+  sentiment: [yahoo_finance]
+  news: [yahoo_finance]
+  economic_data: [fred]
