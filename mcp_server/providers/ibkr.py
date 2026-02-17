@@ -11,6 +11,8 @@ from mcp_server.models import (
     Market,
     OptionChain,
     OptionContract,
+    PriceBar,
+    PriceHistory,
     Quote,
     VolatilitySurface,
 )
@@ -325,3 +327,67 @@ class IBKRProvider(MarketDataProvider):
             put_ivs=put_ivs,
             timestamp=datetime.now(self._get_timezone(market)),
         )
+
+    async def get_price_history(
+        self,
+        symbol: str,
+        market: Market,
+        interval: str = "1d",
+        limit: int = 30,
+    ) -> PriceHistory:
+        """Get historical price data from IB."""
+        ib = await self._connect()
+
+        contract = self._create_stock_contract(symbol, market)
+        await ib.qualifyContractsAsync(contract)
+
+        # Map interval to IB format
+        bar_size_map = {
+            "5m": "5 mins",
+            "1h": "1 hour",
+            "1d": "1 day",
+        }
+        bar_size = bar_size_map.get(interval, "1 day")
+
+        # Calculate duration
+        duration_map = {
+            "5m": "1 D",
+            "1h": "1 W",
+            "1d": "3 M",
+        }
+        duration = duration_map.get(interval, "3 M")
+
+        try:
+            bars_data = await ib.reqHistoricalDataAsync(
+                contract,
+                endDateTime="",
+                durationStr=duration,
+                barSizeSetting=bar_size,
+                whatToShow="TRADES",
+                useRTH=True,
+            )
+
+            bars = []
+            for bar in bars_data[-limit:]:
+                bars.append(PriceBar(
+                    timestamp=bar.date.replace(tzinfo=self._get_timezone(market)),
+                    open=float(bar.open),
+                    high=float(bar.high),
+                    low=float(bar.low),
+                    close=float(bar.close),
+                    volume=int(bar.volume),
+                ))
+
+            return PriceHistory(
+                symbol=symbol,
+                market=market,
+                interval=interval,
+                bars=bars,
+            )
+        except Exception:
+            return PriceHistory(
+                symbol=symbol,
+                market=market,
+                interval=interval,
+                bars=[],
+            )
